@@ -95,5 +95,3 @@ class TestCsvReport(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-    initialize(["Header", "Header2"], False)
-    writeRow(["new", "test2"])
