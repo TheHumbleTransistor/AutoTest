@@ -15,7 +15,7 @@ _testName = ""
 _mountDrive = True
 
 class CsvReport:
-    def __init__(self, dir, headerRow, filename, autoMount=False):
+    def __init__(self, dir, filename, headerRow=[], autoMount=False):
         self.dir = dir
         self.headerRow = headerRow
         self.filename = filename
@@ -26,8 +26,7 @@ class CsvReport:
 
 
     def writeEntry(self, row):
-        date = time.strftime("%Y-%m-%d")
-
+        #date = time.strftime("%Y-%m-%d")
         if self.autoMount:
             subprocess.check_output(['mount', self.dir])
 
@@ -40,7 +39,7 @@ class CsvReport:
             writer = csv.writer(csvfile)
             if firstEntry:
                 writer.writerow(self.headerRow)
-                writer.writerow(row)
+            writer.writerow(row)
 
         if self.autoMount:
             subprocess.check_output(['umount', self.dir])
@@ -63,7 +62,8 @@ class TestCsvReport(unittest.TestCase):
     def test_basic(self):
         expectedFilepath = TestCsvReport.directory + "/report.csv"
         self.assertFalse(os.path.exists(expectedFilepath))
-        report = CsvReport(TestCsvReport.directory, ["Column 1", "Column 2", "Column 3"], "report")
+        report = CsvReport(TestCsvReport.directory, "report", headerRow=["Column 1", "Column 2", "Column 3"])
+        filepath = report.writeEntry(["Result 1", "Result 2", "Result 3",])
         filepath = report.writeEntry(["Result 1", "Result 2", "Result 3",])
         self.assertEqual(filepath, expectedFilepath)
         self.assertTrue(os.path.exists(filepath))
@@ -73,13 +73,13 @@ class TestCsvReport(unittest.TestCase):
             for line in f.readlines():
                 contents += line + '\n'
 
-        expectedContents = "Column 1,Column 2,Column 3\r\n\nResult 1,Result 2,Result 3\r\n\n"
+        expectedContents = "Column 1,Column 2,Column 3\r\n\nResult 1,Result 2,Result 3\r\n\nResult 1,Result 2,Result 3\r\n\n"
         self.assertEqual(contents, expectedContents)
 
     def test_lambdas(self):
         date = lambda : "report_"+time.strftime("%Y-%m-%d")
-        report = CsvReport(TestCsvReport.directory, ["Column 1", "Column 2", "Column 3"], date)
-        expectedFilepath = TestCsvReport.directory + "/report_"+date()+".csv"
+        report = CsvReport(TestCsvReport.directory, date, headerRow=["Column 1", "Column 2", "Column 3"])
+        expectedFilepath = TestCsvReport.directory + "/"+date()+".csv"
         self.assertFalse(os.path.exists(expectedFilepath))
         filepath = report.writeEntry(["Result 1", "Result 2", "Result 3",])
         self.assertEqual(filepath, expectedFilepath)

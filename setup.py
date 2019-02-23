@@ -1,7 +1,7 @@
 from setuptools import setup
 
 setup(name='AutoTest',
-      version='1.0.1',
+      version='1.0.2',
       description='An operator interface for testing hardware on a production line',
       url='https://github.com/TheHumbleTransistor/AutoTest',
       author='Ray Kampmeier',
