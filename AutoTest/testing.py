@@ -8,6 +8,7 @@ from uuid import getnode as get_mac
 from datetime import datetime
 import os
 from csvReport import CsvReport
+import traceback
 
 def parametrizedDecorator(dec):
     def layer(*args, **kwargs):
@@ -120,6 +121,7 @@ class Test:
                 self.__print()
             except Exception as e:
                 self.__print()
+                traceback.print_stack()
                 logging.error(e.__class__.__name__)
                 logging.error(e)
 
@@ -199,6 +201,11 @@ class Test:
         footer = footerPadding +'\n'+ footer +'\n'+ footerPadding +'\n'
         click.echo(click.style(footer, fg='black', bg=TestStatus.color[self.state()], bold=True))
 
+        # Notes & Failure Description
+        for step in self.testSteps:
+            if step.outcome and step.outcome.description:
+                print step.outcome.description
+                print '\n'
 
     def exportResultsHeader(self):
         row = []
@@ -209,6 +216,7 @@ class Test:
         row.append("Time (UTC)")
         row.append("Pass/Fail")
         row.append("Failing Step")
+        row.append("Failing Step Outcome")
         for step in self.testSteps:
             for result in step.results:
                 row.append("%s %s"%(result.description, "(%s)"%result.units if (result.units is not None) else ""))
@@ -228,13 +236,35 @@ class Test:
         failingStep = self.failingStep()
         if failingStep is None:
             row.append("")
+            row.append("")
         else:
             row.append("#%s - %s" % (failingStep.identifier, failingStep.description))
+            outcome = failingStep.outcome.description
+            outcome = "" if outcome is None else outcome
+            row.append(outcome)
+
 
         for step in self.testSteps:
             for result in step.results:
                 row.append("%s"%str(result.value))
         return row
+
+class TestOutcome:
+    def __init__(self, status, resultValues=None, description=None):
+        if type(status) == type(True):
+            self.status = TestStatus.SUCCESS if (status == True) else TestStatus.FAILURE
+        elif status in TestStatus.validStatuses :
+            self.status = status
+        else:
+            raise ValueError("Invalid test status")
+
+        if resultValues is not None:
+            self.resultValues = resultValues if isinstance(resultValues, tuple) else (resultValues,)
+        else:
+            self.resultValues = ()
+
+        self.description = description
+
 
 class TestResult:
     def __init__(self, description, units=None, displayed=True):
@@ -247,7 +277,7 @@ class TestResult:
 def testStep(func, identifier, description, results=(), inputPrompt=None):
     return TestStep(identifier, description, results, func, inputPrompt)
 
-class TestStep:
+class TestStep(object):
     def __init__(self, identifier, description, results, function, inputPrompt):
         self.inputPrompt = inputPrompt
         self.identifier = identifier
@@ -267,6 +297,7 @@ class TestStep:
         self.function = optionalInput(function)
 
     def reset(self):
+        self.outcome = None
         self.state = TestStatus.PENDING
         self.input = None
         for result in self.results:
@@ -281,19 +312,13 @@ class TestStep:
     def run(self):
         # Call test function
         try:
-            returnedValue = self.function(self.input)
-            status, results = (returnedValue, None) if isinstance(returnedValue, bool) else returnedValue
-            results = results if results is not None else ()
-            results = results if isinstance(results, tuple) else (results,)
-            for i,result in enumerate(results):
-                self.results[i].value = result
-            # Test complete
-            if type(status) == type(True):
-                self.state = TestStatus.SUCCESS if (status == True) else TestStatus.FAILURE
-            elif status in TestStatus.validStatuses :
-                self.state = status
-            else:
-                raise ValueError("Invalid test status returned")
+            outcome = self.function(self.input)
+            self.outcome = TestOutcome(True) if isinstance(outcome, bool) else outcome
+
+            for i,value in enumerate(outcome.resultValues):
+                self.results[i].value = value
+
+            self.state = self.outcome.status
         except:
             self.state = TestStatus.ERROR
             raise
