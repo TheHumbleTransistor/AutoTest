@@ -8,14 +8,14 @@ import unittest
 def get_mac(interface):
     commands = ("ifconfig %s" % interface).split(' ')
     output = subprocess.check_output(commands)
-    operatingSystem = platform.system()
-    if operatingSystem == "Linux":
-        searchPrefix = "HWaddr "
-    elif operatingSystem == "Darwin":
-        searchPrefix = "ether "
+
+    searchPrefix = "ether "
     m = re.search(searchPrefix+'([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})', output)
     if m is None:
-        raise Exception('Couldn\'t find this mac address')
+        searchPrefix = "HWaddr "
+        m = re.search(searchPrefix+'([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})', output)
+        if m is None:
+            raise Exception('Couldn\'t find this mac address')
     address = m.group(0).replace(searchPrefix,'')
 
     address = address.replace('"', '').replace(':', '').rstrip()
