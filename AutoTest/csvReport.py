@@ -19,8 +19,6 @@ class CsvReport:
         self.dir = dir
         self.headerRow = headerRow
         self.filename = filename
-        if(os.path.ismount(self.dir) == False) and autoMount:
-            raise ValueError("Only use autoMount=True if \"dir\" is a mount point")
         self.autoMount = autoMount
 
 
