@@ -320,7 +320,8 @@ class TestStep(object):
 
             self.state = self.outcome.status
         except:
-            self.state = TestStatus.ERROR
+            self.outcome = TestOutcome(TestStatus.ERROR)
+            self.state = self.outcome.status
             raise
 
 #  Demo Test
