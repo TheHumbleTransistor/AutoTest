@@ -330,26 +330,26 @@ if __name__ == '__main__':
 
     @testStep(1, "Scan Barcode", TestResult("Serial Number"), "Scan the DUT's barcode")
     def step(input):
-        return (True, input)
+        return TestOutcome(True, input)
     steps.append(step)
 
     @testStep(2, "Connect to the DUT")
     def step():
         time.sleep(1)
-        return (True, ())
+        return TestOutcome(True)
     steps.append(step)
 
     @testStep(3, "Programming the DUT")
     def step():
         time.sleep(2)
-        return (True, ())
+        return TestOutcome(True)
     steps.append(step)
 
     @testStep(4, "Calibration", TestResult("Calibration Coefficient"))
     def step():
         time.sleep(2)
         randomInt = random.randrange(0,100)
-        return (randomInt > 20, random.randrange(0,20000)/10.0)
+        return TestOutcome(randomInt > 20, random.randrange(0,20000)/10.0)
     steps.append(step)
 
     @testStep(5, "Measuring Power Consumption", TestResult("Current Consumption", "uA"))
@@ -357,13 +357,13 @@ if __name__ == '__main__':
         time.sleep(2)
         randomInt = random.randrange(0,100)
         returnCode = True if (randomInt > 40) else TestStatus.WARNING
-        return (returnCode, random.randrange(0,100000)/100.0)
+        return TestOutcome(returnCode, random.randrange(0,100000)/100.0)
     steps.append(step)
 
     @testStep(5, "Setting NV Parameters")
     def step():
         time.sleep(1)
-        return (True, ())
+        return TestOutcome(True)
     steps.append(step)
 
     test = Test(steps, "Demo Test", version="0.0.1", identifier=get_mac()%10000)
