@@ -50,31 +50,70 @@ def alignColumnWidth(rows, padding=4, ignoreAnsiEsc=True):
 
     return sum(lenWithoutANSI(field) for field in rows[0])
 
-# Enum
-class TestStatus:
-  PENDING = "Pending"
-  SUCCESS = "Pass"
-  WARNING = "Warning"
-  FAILURE = "Fail"
-  ERROR = "ERROR"
-  color = {PENDING:"black", SUCCESS:"green", WARNING:"yellow", FAILURE:"red", ERROR:"red"}
-  abortingStatuses = [FAILURE, ERROR]
-  validStatuses = [PENDING, SUCCESS, WARNING, FAILURE, ERROR]
+class TestState:
+    PENDING = "Pending"
+    SUCCESS = "Pass"
+    WARNING = "Warning"
+    FAILURE = "Fail"
+    ERROR = "ERROR"
+    color = {PENDING:"black", SUCCESS:"green", WARNING:"yellow", FAILURE:"red", ERROR:"red"}
+    abortingStatuses = [FAILURE, ERROR]
+    validStatuses = [PENDING, SUCCESS, WARNING, FAILURE, ERROR]
+
+class DeviceUnderTest:
+    def __init__(self, name=""):
+        self.name = name
+        self.resultValues = {}
+
+    def reset(self):
+        self.resultValues = {}
+
+    def _state(self, test):
+        outcome = TestState.SUCCESS
+        for step_idx, step in enumerate(test.steps):
+            if step_idx >= test._activeStep:
+                break
+            stepOutcome = step._outcome(self)
+            if stepOutcome in TestState.abortingStatuses:
+                return stepOutcome
+            if stepOutcome == TestState.WARNING:
+                outcome = stepOutcome
+        if test._activeStep < len(test.steps):
+            return TestState.PENDING
+        return outcome
+
+    # Call this only when the test is incomplete
+    def _failingStep(self, test):
+        for step_idx, step in enumerate(test.steps):
+            if step_idx >= test._activeStep:
+                return None
+            stepOutcome = step._outcome(target)
+            if stepOutcome in TestState.abortingStatuses:
+                return step
+        # No failure
+        return None
+
 
 class Test:
-    def __init__(self, testSteps, name=None, version=None, identifier=None, successStateOverride=None, reports=None):
-        self.testSteps = testSteps # List
+    class State:
+        PENDING = "Pending"
+        COMPLETE = "Complete"
+        ERROR = "ERROR"
+
+    def __init__(self, targets=[DeviceUnderTest()], name=None, version=None, identifier=None, successStateOverride=None, reports=None):
+        self.steps = []
         self.name = name
         self.version = version
         self.identifier = identifier
+        self.targets = targets # devices under test
         if successStateOverride is not None:
-            TestStatus.SUCCESS = successStateOverride
-            TestStatus.color[TestStatus.SUCCESS] = 'white'
+            TestState.SUCCESS = successStateOverride
+            TestState.color[TestState.SUCCESS] = 'white'
 
         if reports == None:
             self.reports = []
         elif type(reports) == CsvReport:
-            self.reports = [C]
+            self.reports = [reports]
         elif type(reports) == list:
             self.reports = reports
         else:
@@ -83,90 +122,112 @@ class Test:
         for report in self.reports:
             report.headerRow = self.exportResultsHeader()
 
+        self._activeStep = 0
+        self._activeTargets = []
+        self.reset()
+
+    def addStep(self, step):
+        if step.identifier == None:
+            step.identifier = len(self.steps)+1
+        step._test = self
+        self.steps.append(step)
+
+
     def reset(self):
-        for testStep in self.testSteps:
-            testStep.reset()
+        self._activeStep = 0
+        for target in self.targets:
+            target.reset()
+        self._activeTargets = self.targets
 
     def state(self):
-        stepStates = [testStep.state for testStep in self.testSteps]
-        if TestStatus.ERROR in stepStates:
-            # The test was aborted due to error
-            return TestStatus.ERROR
-        if TestStatus.FAILURE in stepStates:
-            # The test was aborted due to failure
-            return TestStatus.FAILURE
-        if TestStatus.PENDING in stepStates:
-            # Some test steps are still pending
-            return TestStatus.PENDING
-        if TestStatus.WARNING in stepStates:
-            # One of the test steps resulted in a warning
-            return TestStatus.WARNING
-        # All steps were a success
-        return TestStatus.SUCCESS
-
-    def failingStep(self):
-        # Return the first testStep state that isn't success
-        for testStep in self.testSteps:
-            if testStep.state in TestStatus.abortingStatuses:
-                return testStep
-        # No failure
-        return None
+        targetStates = [target._state(self) for target in self.targets]
+        if TestState.PENDING in targetStates:
+            return Test.State.PENDING
+        if all(targetState == TestState.ERROR for targetState in targetStates):
+            return Test.State.ERROR
+        return Test.State.COMPLETE
 
     def run(self):
-        for testStep in self.testSteps:
-            testStep.collectInput()
-            self.__print()
+        self.reset()
+        for step in self.steps:
             try:
-                testStep.run()
-                self.__print()
+                step._run()
+                self._activeStep += 1
+                self._print()
             except Exception as e:
-                self.__print()
-                traceback.print_stack()
-                logging.error(e.__class__.__name__)
-                logging.error(e)
+                self._activeStep += 1
+                self._print()
+                raise
+                # traceback.print_stack()
+                # logging.error(e.__class__.__name__)
+                # logging.error(e)
 
-            if testStep.state in TestStatus.abortingStatuses:
+            if self.state() == Test.State.COMPLETE or self.state() == Test.State.ERROR:
                 break
+
         # Write to the CSV
         for report in self.reports:
             report.writeEntry(self.exportResults())
         # TODO: Cleanup Step
 
-    def __stepRow(self, step):
-        rows=[]
-        rows.append([])
-        rows[0].append("%s" % step.identifier)
-        rows[0].append(click.style("%s" % step.state ,bg=TestStatus.color[step.state], fg='white' if step.state == TestStatus.PENDING else 'black'))
-        rows[0].append("%s" % step.description)
-        if step.state != TestStatus.PENDING:
+    def _print(self):
+        # returns a results row of data for a given test step and target
+        def _stepRows(step, target):
+            stepOutcome = step._outcome(target)
+            rows=[]
+            rows.append([])
+            rows[0].append("%s" % step.identifier)
+            if len(self.targets)>1:
+                rows[0].append("%s" % target.name)
+            rows[0].append(click.style("%s" % stepOutcome ,bg=TestState.color[stepOutcome], fg='white' if stepOutcome == TestState.PENDING else 'black'))
+            rows[0].append("%s" % step.description)
+
+            if stepOutcome == TestState.PENDING:
+                return rows
+            stepOutcome = step._outcome(target)
             for result in step.results:
                 if result.displayed is not True:
                     continue
-                if len(rows[-1]) >= 4:
-                    rows.append(["","",""])
+                # Check if this is not the first row
+                if len(rows[-1]) > 4:
+                    if len(self.targets)>1:
+                        rows.append(["","","",""])
+                    else:
+                        rows.append(["","",""])
+                if result in target.resultValues.keys():
+                    value = target.resultValues[result]
+                else:
+                    value = None
+
                 # Only print units if they have been defined
                 unitsString = " (%s)"%result.units if result.units is not None else ""
-                if isinstance(result.value, float):
-                    if result.value == 0:
+                if isinstance(value, float):
+                    if value == 0:
                         value = "0"
-                    elif result.value >= 0.001:
-                        value = "%.3f" % result.value
+                    elif value >= 0.001:
+                        value = "%.3f" % value
                     else:
-                        value = "{:.3E}".format(result.value)
-                elif isinstance(result.value, basestring) and len(result.value) > 50:
-                    value = result.value[0:50] + "..."
+                        value = "{:.3E}".format(value)
+                elif isinstance(value, basestring) and len(value) > 50:
+                    value = value[0:50] + "..."
                 else:
-                    value = result.value
+                    value = value
                 rows[-1].append("%s: %s%s" % (result.description, click.style("%s" % value, bold=True), unitsString))
+            return rows
 
-        return rows
 
-    def __print(self):
         # Format Test Results
-        rows = []
-        rows.append(["Step #", "Status", "Step", "Results".ljust(40)])
-        for step in self.testSteps:
-            rows.extend(self.__stepRow(step))
+        rows = [[]]
+        rows[0].append("Step #")
+        if len(self.targets)>1:
+            rows[0].append("DUT")
+        rows[0].append("Status")
+        rows[0].append("Step")
+        rows[0].append("Results".ljust(40))
+
+        for step in self.steps:
+            for target in self.targets:
+                rows.extend(_stepRows(step, target))
         width = alignColumnWidth(rows)
 
         # Clear screen
@@ -184,28 +245,43 @@ class Test:
             click.echo( headerline )
         click.echo("") # New Line
 
-        # Test Results
-        for y,row in enumerate(rows):
+        # Test Result Table
+        for row_idx, row in enumerate(rows):
             rowString = ""
             for field in row:
                 rowString += field
-            if y is 0:
+            if row_idx is 0:
                 rowString = click.style(rowString, fg='black', bg='white', bold=True) # Color the Header Row
             click.echo(rowString)
 
-        click.echo("") # New Line
+        click.echo("\n") # New Line
 
         # Footer
-        footerPadding = "".center(width) + '\n' + "".center(width) + '\n' + "".center(width)
-        footer = (self.state()).center(width)
-        footer = footerPadding +'\n'+ footer +'\n'+ footerPadding +'\n'
-        click.echo(click.style(footer, fg='black', bg=TestStatus.color[self.state()], bold=True))
+        if len(self.targets) == 1:
+            state = target._state(self)
+            footerPadding = "".center(width) + '\n' + "".center(width) + '\n' + "".center(width)
+            footer = (state).center(width)
+            footer = footerPadding +'\n'+ footer +'\n'+ footerPadding
+            click.echo(click.style(footer, fg='black', bg=TestState.color[state], bold=True))
+        else:
+            maxTargetNameLen = max([len(target.name) for target in self.targets])
+            nameWidth = maxTargetNameLen + 10
+            for target_idx, target in enumerate(self.targets):
+                state = target._state(self)
+                label = "{} result: ".format(target.name)
+                footerPadding = "".center(nameWidth) + click.style("".center(width-nameWidth), fg='black', bg=TestState.color[state], bold=True)
+                footer =  label.center(nameWidth) + click.style(state.center(width-nameWidth), fg='black', bg=TestState.color[state], bold=True)
+                footer = footerPadding +'\n'+ footer +'\n'+ footerPadding
+                click.echo(footer)
+
+        click.echo("\n") # New Line
+
 
         # Notes & Failure Description
-        for step in self.testSteps:
-            if step.outcome and step.outcome.description:
-                print step.outcome.description
-                print '\n'
+        # for step in self.steps:
+        #     if step.outcome and step.outcome.description:
+        #         print step.outcome.description
+        #         print '\n'
 
     def exportResultsHeader(self):
         row = []
@@ -217,7 +293,7 @@ class Test:
         row.append("Pass/Fail")
         row.append("Failing Step")
         row.append("Failing Step Outcome")
-        for step in self.testSteps:
+        for step in self.steps:
             for result in step.results:
                 row.append("%s %s"%(result.description, "(%s)"%result.units if (result.units is not None) else ""))
         return row
@@ -244,135 +320,124 @@ class Test:
             row.append(outcome)
 
 
-        for step in self.testSteps:
+        for step in self.steps:
             for result in step.results:
                 row.append("%s"%str(result.value))
         return row
 
-class TestOutcome:
-    def __init__(self, status, resultValues=None, description=None):
-        if type(status) == type(True):
-            self.status = TestStatus.SUCCESS if (status == True) else TestStatus.FAILURE
-        elif status in TestStatus.validStatuses :
-            self.status = status
-        else:
-            raise ValueError("Invalid test status")
-
-        if resultValues is not None:
-            self.resultValues = resultValues if isinstance(resultValues, tuple) else (resultValues,)
-        else:
-            self.resultValues = ()
-
-        self.description = description
 
 
-class TestResult:
-    def __init__(self, description, units=None, displayed=True):
+@parametrizedDecorator
+def testResult(func, description, units=None, displayed=True):
+    result = TestResult(description=description, criteria=func, units=units, displayed=displayed)
+    return result
+
+class TestResult(object):
+    class Outcome:
+        PASS = "Pass"
+        FAIL = "Fail"
+        WARNING = "Warning"
+    def __init__(self, description, criteria= lambda x : True if x != None else False , units=None, displayed=True):
         self.description = description
         self.units = units
         self.displayed = displayed
-        self.value = None
+        if not callable(criteria):
+            raise ValueError("criteria must be callable: a function or lambda")
+
+        # Decorator
+        def convertedOutcome(function):
+            def wrapped(x):
+                retval = function(x)
+                if type(retval) == type(True):
+                    return TestResult.Outcome.PASS if retval else TestResult.Outcome.FAIL
+                elif type(retval) == TestResult.Outcome:
+                    return retval
+                else:
+                    raise ValueError("Criteria function must return a valid outcome")
+            return wrapped
+        self.criteria = convertedOutcome(criteria)
 
 @parametrizedDecorator
-def testStep(func, identifier, description, results=(), inputPrompt=None):
-    return TestStep(identifier, description, results, func, inputPrompt)
+def testStep(func, test, description, results=(), identifier=None):
+    step = TestStep(test, identifier, description, results, func)
+    test.addStep(step)
+    return step
 
 class TestStep(object):
-    def __init__(self, identifier, description, results, function, inputPrompt):
-        self.inputPrompt = inputPrompt
+    def __init__(self, test, identifier, description, results, function ):
+        self._test = test
         self.identifier = identifier
         self.description = description
         # create a tuple if it's not one
         self.results = results if isinstance(results, tuple) else (results,)
-        self.reset()
+        self._function = function
 
-        # Decorator
-        def optionalInput(f):
-            def wrapped(input=None):
-                numberOfArgs = len(getargspec(f)[0])
-                if numberOfArgs is 1:
-                    return f(input)
-                return f()
-            return wrapped
-        self.function = optionalInput(function)
+    def prompt(self, message):
+        return promptFunc(message)
 
-    def reset(self):
-        self.outcome = None
-        self.state = TestStatus.PENDING
-        self.input = None
+    def _outcome(self, target):
+        # Check if this test is pending
+        if self._test._activeStep <= self._test.steps.index(self):
+            return TestState.PENDING
+
+        # Check if any results are missing
         for result in self.results:
-            result.value = None
+            if result not in target.resultValues.keys():
+                return TestState.ERROR
 
-    def collectInput(self):
-        # Input Prompt
-        if self.inputPrompt is not None:
-            # getargspec returns a tuple. The first element is the argument names.
-            self.input = promptFunc(self.inputPrompt)
+        # Check if any results have failed
+        for result in self.results:
+            resultValue = target.resultValues[result]
+            if result.criteria(resultValue) == TestState.FAILURE:
+                return TestState.FAILURE
 
-    def run(self):
-        # Call test function
-        try:
-            outcome = self.function(self.input)
-            self.outcome = TestOutcome(True) if isinstance(outcome, bool) else outcome
+        # Check if any results have warnings
+        for result in self.results:
+            resultValue = target.resultValues[result]
+            if result.criteria(resultValue) == TestState.WARNING:
+                return TestState.WARNING
 
-            for i,value in enumerate(outcome.resultValues):
-                self.results[i].value = value
+        return TestState.SUCCESS
 
-            self.state = self.outcome.status
-        except:
-            self.outcome = TestOutcome(TestStatus.ERROR)
-            self.state = self.outcome.status
-            raise
+    def _run(self):
+        self._function(self, self._test._activeTargets)
+
 
 #  Demo Test
 if __name__ == '__main__':
-    steps = []
+    dut1 = DeviceUnderTest()
+    dut2 = DeviceUnderTest()
 
-    @testStep(1, "Scan Barcode", TestResult("Serial Number"), "Scan the DUT's barcode")
-    def step(input):
-        return TestOutcome(True, input)
-    steps.append(step)
+    test = Test(targets=[dut1, dut2], name="Demo Test", version="0.0.1", identifier=get_mac()%10000)
 
-    @testStep(2, "Connect to the DUT")
-    def step():
-        time.sleep(1)
-        return TestOutcome(True)
-    steps.append(step)
+    @testResult("Serial Number")
+    def serialNumber_result(value):
+        if len(value) > 5:
+            return True
+        else:
+            return False
 
-    @testStep(3, "Programming the DUT")
-    def step():
-        time.sleep(2)
-        return TestOutcome(True)
-    steps.append(step)
+    randomResult = TestResult("Random Result", units="randoUnits")
 
-    @testStep(4, "Calibration", TestResult("Calibration Coefficient"))
-    def step():
-        time.sleep(2)
-        randomInt = random.randrange(0,100)
-        return TestOutcome(randomInt > 20, random.randrange(0,20000)/10.0)
-    steps.append(step)
+    @testStep(test, "Scan Barcode", results=(serialNumber_result, randomResult))
+    def step(self, targets):
+        for idx, target in enumerate(targets):
+            input = self.prompt("Scan the DUT # {}\'s barcode".format(idx))
+            target.name = input
+            target.resultValues[serialNumber_result] = input
+            target.resultValues[randomResult] = random.random()
 
-    @testStep(5, "Measuring Power Consumption", TestResult("Current Consumption", "uA"))
-    def step():
-        time.sleep(2)
-        randomInt = random.randrange(0,100)
-        returnCode = True if (randomInt > 40) else TestStatus.WARNING
-        return TestOutcome(returnCode, random.randrange(0,100000)/100.0)
-    steps.append(step)
+    randomResult2 = TestResult("Random Result 2", units="randoUnits")
+    @testStep(test, "Connect to the DUT", results=(randomResult2))
+    def step(self, targets):
+        input = self.prompt("Type jibberish")
+        for idx, target in enumerate(targets):
+            target.resultValues[randomResult2] = idx
 
-    @testStep(5, "Setting NV Parameters")
-    def step():
-        time.sleep(1)
-        return TestOutcome(True)
-    steps.append(step)
-
-    test = Test(steps, "Demo Test", version="0.0.1", identifier=get_mac()%10000)
-
-    csvHeader = test.exportResultsHeader()
 
     click.clear()
     while True:
         test.reset()
         test.run()
-        click.echo("Next Test. ", nl=False)
-    # click.pause(info=click.style("\nPress button to restart the test sequence...", blink=True))
+        click.echo("Next Test. ", nl=True)
+        # click.pause(info=click.style("\nPress button to restart the test sequence...", blink=True))
