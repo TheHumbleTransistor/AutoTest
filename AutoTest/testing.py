@@ -62,13 +62,19 @@ class TestState:
     abortingStatuses = [FAILURE, ERROR]
     validStatuses = [PENDING, SUCCESS, WARNING, FAILURE, ERROR]
 
-class DeviceUnderTest:
+class DeviceUnderTest(object):
     def __init__(self, name=""):
         self.name = name
         self.resultValues = {}
+        self._errors = {}
+        self._trace = {}
+        self._activeStep = 0
 
     def reset(self):
         self.resultValues = {}
+        self._errors = {}
+        self._trace = {}
+        self._activeStep = 0
 
     def _state(self, test):
         outcome = TestState.SUCCESS
@@ -85,7 +91,7 @@ class DeviceUnderTest:
     # Call this only when the test is incomplete
     def _failingStep(self, test):
         for step_idx, step in enumerate(test.steps):
-            if step_idx >= test._activeStep:
+            if step_idx >= self._activeStep:
                 return None
             stepOutcome = step._outcome(self)
             if stepOutcome in TestState.abortingStatuses:
@@ -122,7 +128,6 @@ class Test:
         for report in self.reports:
             report.headerRow = self.exportResultsHeader()
 
-        self._activeStep = 0
         self._activeTargets = []
         self.reset()
 
@@ -131,10 +136,10 @@ class Test:
             step.identifier = len(self.steps)+1
         step._test = self
         self.steps.append(step)
-
+        for report in self.reports:
+            report.headerRow = self.exportResultsHeader()
 
     def reset(self):
-        self._activeStep = 0
         for target in self.targets:
             target.reset()
         self._activeTargets = self.targets[:]
@@ -150,28 +155,43 @@ class Test:
     def run(self):
         self.reset()
         for step in self.steps:
-            try:
-                step._run()
-                self._activeStep += 1
+            if step.groupExecution:
+                targetGroups = [self._activeTargets[:]] # run all targets at once
+            else:
+                targetGroups = [[target] for target in self._activeTargets[:]]  # run the test step for each individual target
+            for targetGroup in targetGroups:
+                try:
+                    step._run(targetGroup)
+                except Exception as e:
+                    for target in targetGroup:
+                        target._errors[step] = e
+                        target._trace[step] = traceback.format_exc()
+
+                for target in targetGroup:
+                    target._activeStep += 1
+
                 self._print()
-            except Exception as e:
-                self._activeStep += 1
-                self._print()
-                raise
-                # traceback.print_stack()
-                # logging.error(e.__class__.__name__)
-                # logging.error(e)
+                for target in self._activeTargets:
+                    if step not in target._errors.keys():
+                        continue
+                    e = target._errors[step]
+                    if step in target._trace.keys():
+                        print(target._trace[step])
+                    logging.error(e.__class__.__name__)
+                    logging.error(e)
 
             # eliminate target if it's failed
             for target in self._activeTargets[:]:
                 if target._state(self) != TestState.PENDING:
                     self._activeTargets.remove(target)
+
             if self.state() == Test.State.COMPLETE or self.state() == Test.State.ERROR:
                 break
 
         # Write to the CSV
-        for report in self.reports:
-            report.writeEntry(self.exportResults())
+        for target in self.targets:
+            for report in self.reports:
+                report.writeEntry(self.exportResults(target))
         # TODO: Cleanup Step
 
     def _print(self):
@@ -190,9 +210,8 @@ class Test:
             if stepOutcome == TestState.PENDING or stepOutcome == TestState.ABORTED:
                 return rows
             stepOutcome = step._outcome(target)
-            for result_idx, result in enumerate(step.results):
-                if result.displayed is not True:
-                    continue
+            dispayedResults = list(filter(lambda result: result.displayed == True, step.results))
+            for result_idx, result in enumerate(dispayedResults):
                 # Check if this is not the first row
                 if result_idx > 0:
                     if len(self.targets)>1:
@@ -297,15 +316,17 @@ class Test:
         row.append("Station ID")
         row.append("Date (UTC)")
         row.append("Time (UTC)")
+        row.append("Target Name")
         row.append("Pass/Fail")
         row.append("Failing Step")
         row.append("Failing Step Outcome")
         for step in self.steps:
             for result in step.results:
-                row.append("%s %s"%(result.description, "(%s)"%result.units if (result.units is not None) else ""))
+                units = "({})".format(result.units) if (result.units is not None) else ""
+                row.append("{} {}".format(result.description, units))
         return row
 
-    def exportResults(self):
+    def exportResults(self, target):
         row = []
         row.append(self.name)
         row.append(self.version)
@@ -314,22 +335,27 @@ class Test:
         date = datetime.now()
         row.append(date.strftime('%Y/%m/%d'))
         row.append(date.strftime('%H:%M:%S'))
-        row.append(self.state())
+        row.append(target.name)
+        row.append(target._state(self))
 
-        failingStep = self.failingStep()
+        failingStep = target._failingStep(self)
         if failingStep is None:
             row.append("")
             row.append("")
         else:
             row.append("#%s - %s" % (failingStep.identifier, failingStep.description))
-            outcome = failingStep.outcome.description
-            outcome = "" if outcome is None else outcome
-            row.append(outcome)
+            error = ""
+            if failingStep in target._errors.keys():
+                error = str(target._errors[failingStep])
+            row.append(error)
 
 
         for step in self.steps:
             for result in step.results:
-                row.append("%s"%str(result.value))
+                value = None
+                if result in target.resultValues.keys():
+                    value = target.resultValues[result]
+                row.append("%s"%str(value))
         return row
 
 
@@ -365,19 +391,20 @@ class TestResult(object):
         self.criteria = convertedOutcome(criteria)
 
 @parametrizedDecorator
-def testStep(func, test, description, results=(), identifier=None):
-    step = TestStep(test, identifier, description, results, func)
+def testStep(func, test, description, results=(), identifier=None, groupExecution=False):
+    step = TestStep(test, identifier, description, results, func, groupExecution)
     test.addStep(step)
     return step
 
 class TestStep(object):
-    def __init__(self, test, identifier, description, results, function ):
+    def __init__(self, test, identifier, description, results, function, groupExecution=False):
         self._test = test
         self.identifier = identifier
         self.description = description
         # create a tuple if it's not one
         self.results = results if isinstance(results, tuple) else (results,)
         self._function = function
+        self.groupExecution = groupExecution
 
     def prompt(self, message):
         return promptFunc(message)
@@ -391,13 +418,17 @@ class TestStep(object):
                 return TestState.ABORTED
 
         # Check if this test is pending
-        if self._test._activeStep <= self._test.steps.index(self):
+        if target._activeStep <= self._test.steps.index(self):
             return TestState.PENDING
 
-        # Check if any results are missing
+        # Check if an Error had been produced
+        if self in target._errors.keys() and target._errors[self] != None:
+                return TestState.ERROR
+
+        # If any results are missing, populate them with None
         for result in self.results:
             if result not in target.resultValues.keys():
-                return TestState.ERROR
+                target.resultValues[result] = None
 
         # Check if any results have failed
         for result in self.results:
@@ -413,8 +444,11 @@ class TestStep(object):
 
         return TestState.SUCCESS
 
-    def _run(self):
-        self._function(self, self._test._activeTargets)
+    def _run(self, targets):
+        if self.groupExecution:
+            self._function(self, targets)
+        else:
+            self._function(self, targets[0])
 
 
 #  Demo Test
@@ -433,16 +467,19 @@ if __name__ == '__main__':
 
     randomResult = TestResult("Random Result", units="randoUnits")
 
+    scanIdx = 0
     @testStep(test, "Scan Barcode", results=(serialNumber_result, randomResult))
     def step(self, targets):
-        for idx, target in enumerate(targets):
-            input = self.prompt("Scan the DUT # {}\'s barcode".format(idx))
-            target.name = input
-            target.resultValues[serialNumber_result] = input
-            target.resultValues[randomResult] = random.random()
+        target = targets[0]
+        global scanIdx
+        input = self.prompt("Scan the DUT # {}\'s barcode".format(scanIdx))
+        scanIdx += 1
+        target.name = input
+        target.resultValues[serialNumber_result] = input
+        target.resultValues[randomResult] = random.random()
 
     randomResult2 = TestResult("Random Result 2", units="randoUnits")
-    @testStep(test, "Connect to the DUT", results=(randomResult2))
+    @testStep(test, "Connect to the DUT", results=(randomResult2), groupExecution = True)
     def step(self, targets):
         input = self.prompt("Type jibberish")
         for idx, target in enumerate(targets):
