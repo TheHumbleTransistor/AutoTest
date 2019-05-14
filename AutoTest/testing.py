@@ -56,7 +56,9 @@ class TestState:
     WARNING = "Warning"
     FAILURE = "Fail"
     ERROR = "ERROR"
-    color = {PENDING:"black", SUCCESS:"green", WARNING:"yellow", FAILURE:"red", ERROR:"red"}
+    ABORTED = "Aborted"
+    color = {ABORTED:"black", PENDING:"black", SUCCESS:"green", WARNING:"yellow", FAILURE:"red", ERROR:"red"}
+    textColor = {ABORTED:"white", PENDING:"white", SUCCESS:"black", WARNING:"black", FAILURE:"black", ERROR:"black"}
     abortingStatuses = [FAILURE, ERROR]
     validStatuses = [PENDING, SUCCESS, WARNING, FAILURE, ERROR]
 
@@ -71,15 +73,13 @@ class DeviceUnderTest:
     def _state(self, test):
         outcome = TestState.SUCCESS
         for step_idx, step in enumerate(test.steps):
-            if step_idx >= test._activeStep:
-                break
             stepOutcome = step._outcome(self)
             if stepOutcome in TestState.abortingStatuses:
                 return stepOutcome
+            if stepOutcome == TestState.PENDING:
+                return stepOutcome
             if stepOutcome == TestState.WARNING:
                 outcome = stepOutcome
-        if test._activeStep < len(test.steps):
-            return TestState.PENDING
         return outcome
 
     # Call this only when the test is incomplete
@@ -87,7 +87,7 @@ class DeviceUnderTest:
         for step_idx, step in enumerate(test.steps):
             if step_idx >= test._activeStep:
                 return None
-            stepOutcome = step._outcome(target)
+            stepOutcome = step._outcome(self)
             if stepOutcome in TestState.abortingStatuses:
                 return step
         # No failure
@@ -137,7 +137,7 @@ class Test:
         self._activeStep = 0
         for target in self.targets:
             target.reset()
-        self._activeTargets = self.targets
+        self._activeTargets = self.targets[:]
 
     def state(self):
         targetStates = [target._state(self) for target in self.targets]
@@ -162,6 +162,10 @@ class Test:
                 # logging.error(e.__class__.__name__)
                 # logging.error(e)
 
+            # eliminate target if it's failed
+            for target in self._activeTargets[:]:
+                if target._state(self) != TestState.PENDING:
+                    self._activeTargets.remove(target)
             if self.state() == Test.State.COMPLETE or self.state() == Test.State.ERROR:
                 break
 
@@ -178,19 +182,21 @@ class Test:
             rows.append([])
             rows[0].append("%s" % step.identifier)
             if len(self.targets)>1:
+                # If there's multiple DUTs, print a column with their names
                 rows[0].append("%s" % target.name)
-            rows[0].append(click.style("%s" % stepOutcome ,bg=TestState.color[stepOutcome], fg='white' if stepOutcome == TestState.PENDING else 'black'))
+            rows[0].append(click.style("%s" % stepOutcome ,bg=TestState.color[stepOutcome], fg=TestState.textColor[stepOutcome]))
             rows[0].append("%s" % step.description)
 
-            if stepOutcome == TestState.PENDING:
+            if stepOutcome == TestState.PENDING or stepOutcome == TestState.ABORTED:
                 return rows
             stepOutcome = step._outcome(target)
-            for result in step.results:
+            for result_idx, result in enumerate(step.results):
                 if result.displayed is not True:
                     continue
                 # Check if this is not the first row
-                if len(rows[-1]) > 4:
+                if result_idx > 0:
                     if len(self.targets)>1:
+                        # If there's multiple DUTs, there's an added name column
                         rows.append(["","","",""])
                     else:
                         rows.append(["","",""])
@@ -228,6 +234,7 @@ class Test:
         for step in self.steps:
             for target in self.targets:
                 rows.extend(_stepRows(step, target))
+                stepOutcome = step._outcome(target)
         width = alignColumnWidth(rows)
 
         # Clear screen
@@ -268,9 +275,9 @@ class Test:
             nameWidth = maxTargetNameLen + 10
             for target_idx, target in enumerate(self.targets):
                 state = target._state(self)
-                label = "{} result: ".format(target.name)
+                label = "{} result: ".format(click.style(target.name, bold=True))
                 footerPadding = "".center(nameWidth) + click.style("".center(width-nameWidth), fg='black', bg=TestState.color[state], bold=True)
-                footer =  label.center(nameWidth) + click.style(state.center(width-nameWidth), fg='black', bg=TestState.color[state], bold=True)
+                footer =  label.center(nameWidth + lenOfAsciiEscapeChars(label)) + click.style(state.center(width-nameWidth), fg='black', bg=TestState.color[state], bold=True)
                 footer = footerPadding +'\n'+ footer +'\n'+ footerPadding
                 click.echo(footer)
 
@@ -376,6 +383,13 @@ class TestStep(object):
         return promptFunc(message)
 
     def _outcome(self, target):
+        # Check if this test is aborted
+        stepIdx = self._test.steps.index(self)
+        if stepIdx > 0:
+            previousStepState = self._test.steps[stepIdx-1]._outcome(target)
+            if (previousStepState in TestState.abortingStatuses) or (previousStepState == TestState.ABORTED):
+                return TestState.ABORTED
+
         # Check if this test is pending
         if self._test._activeStep <= self._test.steps.index(self):
             return TestState.PENDING
