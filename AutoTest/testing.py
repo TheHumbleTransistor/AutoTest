@@ -196,16 +196,16 @@ class Test:
 
     def _print(self):
         # returns a results row of data for a given test step and target
-        def _stepRows(step, target):
+        def _stepRows(step, target, firstTarget):
             stepOutcome = step._outcome(target)
             rows=[]
             rows.append([])
-            rows[0].append("%s" % step.identifier)
+            rows[0].append("%s" % step.identifier if firstTarget else "")
             if len(self.targets)>1:
                 # If there's multiple DUTs, print a column with their names
                 rows[0].append("%s" % target.name)
             rows[0].append(click.style("%s" % stepOutcome ,bg=TestState.color[stepOutcome], fg=TestState.textColor[stepOutcome]))
-            rows[0].append("%s" % step.description)
+            rows[0].append("%s" % step.description if firstTarget else "")
 
             if stepOutcome == TestState.PENDING or stepOutcome == TestState.ABORTED:
                 return rows
@@ -251,8 +251,8 @@ class Test:
         rows[0].append("Results".ljust(40))
 
         for step in self.steps:
-            for target in self.targets:
-                rows.extend(_stepRows(step, target))
+            for target_idx, target in enumerate(self.targets):
+                rows.extend(_stepRows(step, target, target_idx==0))
                 stepOutcome = step._outcome(target)
         width = alignColumnWidth(rows)
 
