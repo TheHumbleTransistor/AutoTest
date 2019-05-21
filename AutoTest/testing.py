@@ -469,8 +469,8 @@ if __name__ == '__main__':
 
     scanIdx = 0
     @testStep(test, "Scan Barcode", results=(serialNumber_result, randomResult))
-    def step(self, targets):
-        target = targets[0]
+    def step(self, target):
+        target = target
         global scanIdx
         input = self.prompt("Scan the DUT # {}\'s barcode".format(scanIdx))
         scanIdx += 1
@@ -488,6 +488,7 @@ if __name__ == '__main__':
 
     click.clear()
     while True:
+        scanIdx = 0
         test.reset()
         test.run()
         click.echo("Next Test. ", nl=True)

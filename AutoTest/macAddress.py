@@ -7,7 +7,10 @@ import unittest
 # Gets a unique Mac Address identifier for a specified network interface
 def get_mac(interface):
     commands = ("ifconfig %s" % interface).split(' ')
-    output = subprocess.check_output(commands)
+    try:
+        output = subprocess.check_output(commands)
+    except:
+        return None
 
     searchPrefix = "ether "
     m = re.search(searchPrefix+'([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})', output)
@@ -15,7 +18,7 @@ def get_mac(interface):
         searchPrefix = "HWaddr "
         m = re.search(searchPrefix+'([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})', output)
         if m is None:
-            raise Exception('Couldn\'t find this mac address')
+            return None
     address = m.group(0).replace(searchPrefix,'')
 
     address = address.replace('"', '').replace(':', '').rstrip()
