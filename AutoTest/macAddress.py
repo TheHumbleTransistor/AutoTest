@@ -5,8 +5,12 @@ import platform
 import unittest
 
 # Gets a unique Mac Address identifier for a specified network interface
-def get_mac(interface):
-    commands = ("ifconfig %s" % interface).split(' ')
+def get_mac(interface=None):
+    if interface:
+        commands = ["ifconfig", interface]
+    else:
+        commands = ["ifconfig"]
+
     try:
         output = subprocess.check_output(commands)
     except:
