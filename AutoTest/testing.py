@@ -190,8 +190,9 @@ class Test:
 
         # Write to the CSV
         for target in self.targets:
-            for report in self.reports:
-                report.writeEntry(self.exportResults(target))
+            if target is not None:
+                for report in self.reports:
+                    report.writeEntry(self.exportResults(target))
         # TODO: Cleanup Step
 
     def _print(self):
