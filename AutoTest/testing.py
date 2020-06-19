@@ -234,7 +234,7 @@ class Test:
                         value = "%.3f" % value
                     else:
                         value = "{:.3E}".format(value)
-                elif isinstance(value, basestring) and len(value) > 50:
+                elif isinstance(value, str) and len(value) > 50:
                     value = value[0:50] + "..."
                 else:
                     value = value
@@ -450,47 +450,3 @@ class TestStep(object):
             self._function(self, targets)
         else:
             self._function(self, targets[0])
-
-
-#  Demo Test
-if __name__ == '__main__':
-    dut1 = DeviceUnderTest()
-    dut2 = DeviceUnderTest()
-
-    test = Test(targets=[dut1, dut2], name="Demo Test", version="0.0.1", identifier=get_mac()%10000)
-
-    @testResult("Serial Number")
-    def serialNumber_result(value):
-        if len(value) > 5:
-            return True
-        else:
-            return False
-
-    randomResult = TestResult("Random Result", units="randoUnits")
-
-    scanIdx = 0
-    @testStep(test, "Scan Barcode", results=(serialNumber_result, randomResult))
-    def step(self, target):
-        target = target
-        global scanIdx
-        input = self.prompt("Scan the DUT # {}\'s barcode".format(scanIdx))
-        scanIdx += 1
-        target.name = input
-        target.resultValues[serialNumber_result] = input
-        target.resultValues[randomResult] = random.random()
-
-    randomResult2 = TestResult("Random Result 2", units="randoUnits")
-    @testStep(test, "Connect to the DUT", results=(randomResult2), groupExecution = True)
-    def step(self, targets):
-        input = self.prompt("Type jibberish")
-        for idx, target in enumerate(targets):
-            target.resultValues[randomResult2] = idx
-
-
-    click.clear()
-    while True:
-        scanIdx = 0
-        test.reset()
-        test.run()
-        click.echo("Next Test. ", nl=True)
-        # click.pause(info=click.style("\nPress button to restart the test sequence...", blink=True))
