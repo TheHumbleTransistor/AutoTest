@@ -7,14 +7,15 @@ import random
 from uuid import getnode as get_mac
 from datetime import datetime
 import os
-from csvReport import CsvReport
 import traceback
-from testing import DeviceUnderTest, Test, TestStep, testStep, TestResult, testResult
+from AutoTest import DeviceUnderTest, Test, TestStep, testStep, TestResult, testResult, CsvReport
+
+report = CsvReport(os.path.dirname(os.path.realpath(__file__)) + "/", lambda:"EXAMPLE_REPORT_"+time.strftime("%Y-%m-%d"))
 
 if __name__ == '__main__':
     dut = DeviceUnderTest()
 
-    test = Test(targets=[dut], name="Example Test", version="1.0.0", identifier=get_mac()%10000)
+    test = Test(targets=[dut], name="Example Test", version="1.0.0", identifier=get_mac()%10000, reports=[report])
 
     @testResult("Serial Number")
     def serialNumber_result(value):

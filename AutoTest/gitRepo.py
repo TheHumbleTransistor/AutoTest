@@ -13,4 +13,4 @@ def commitSha(dir=os.path.dirname(os.path.realpath(__file__)), short=True):
 	return sha[0:6] if short else sha
 
 if __name__ == '__main__':
-	print commitSha()
+	print(commitSha())

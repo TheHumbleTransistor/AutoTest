@@ -7,7 +7,8 @@ import random
 from uuid import getnode as get_mac
 from datetime import datetime
 import os
-from csvReport import CsvReport
+import sys
+from .csvReport import CsvReport
 import traceback
 
 def parametrizedDecorator(dec):

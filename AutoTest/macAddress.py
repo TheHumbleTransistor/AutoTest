@@ -31,5 +31,5 @@ def get_mac(interface=None):
 
 if __name__ == '__main__':
     # unittest.main()
-    print get_mac("en0")
+    print(get_mac("en0"))
     # print get_mac("wlan0")

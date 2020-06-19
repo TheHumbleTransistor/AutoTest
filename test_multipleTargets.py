@@ -9,7 +9,7 @@ from datetime import datetime
 import os
 from csvReport import CsvReport
 import traceback
-from testing import DeviceUnderTest, Test, TestStep, testStep, TestResult, testResult
+from AutoTest import DeviceUnderTest, Test, TestStep, testStep, TestResult, testResult
 
 if __name__ == '__main__':
     dut1 = DeviceUnderTest()
