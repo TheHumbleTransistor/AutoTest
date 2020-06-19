@@ -8,7 +8,7 @@ from uuid import getnode as get_mac
 from datetime import datetime
 import os
 import traceback
-from AutoTest import DeviceUnderTest, Test, TestStep, testStep, TestResult, testResult, CsvReport
+from AutoTest import DeviceUnderTest, Test, TestStep, testStep, TestResult, testResult, CsvReport, get_mac
 
 report = CsvReport(os.path.dirname(os.path.realpath(__file__)) + "/", lambda:"EXAMPLE_REPORT_"+time.strftime("%Y-%m-%d"))
 
